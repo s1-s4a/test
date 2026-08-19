@@ -316,19 +316,27 @@
             }
         }
 
+        // Сглаженные координаты кончика пальца (уменьшают дрожание)
+        let smoothTipX = null, smoothTipY = null;
+        const SMOOTH_K = 0.4; // 0..1, больше = быстрее реагирует, но больше дрожь
+
         function onHandResults(results) {
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 handActive = true;
-                hint.textContent = 'Рука в камере: найдена ✋';
 
                 const lm = results.multiHandLandmarks[0];
-                const tip = lm[8]; // кончик указательного пальца
-                const thumbTip = lm[4]; // кончик большого пальца
+                const tip = lm[8];       // кончик указательного пальца
+                const thumbTip = lm[4];  // кончик большого пальца
+                const wrist = lm[0];     // запястье
+                const middleMcp = lm[9]; // основание среднего пальца
 
-                // MediaPipe отдаёт нормализованные 0..1 координаты
-                // относительно кадра video (facingMode environment — без зеркала)
-                const px = tip.x * window.innerWidth;
-                const py = tip.y * window.innerHeight;
+                // сглаживание кончика пальца (экспоненциальное скользящее среднее)
+                if (smoothTipX === null) { smoothTipX = tip.x; smoothTipY = tip.y; }
+                smoothTipX += (tip.x - smoothTipX) * SMOOTH_K;
+                smoothTipY += (tip.y - smoothTipY) * SMOOTH_K;
+
+                const px = smoothTipX * window.innerWidth;
+                const py = smoothTipY * window.innerHeight;
 
                 handTargetWorld = screenPxToWorld(px, py);
 
@@ -336,13 +344,37 @@
                 fingerDot.style.left = px + 'px';
                 fingerDot.style.top = py + 'px';
 
-                // "щипок" большим+указательным пальцем = захват объекта
+                // Размер ладони в кадре (запястье -> основание среднего пальца).
+                // Используем его как "линейку", чтобы порог щипка не зависел
+                // от того, насколько близко/далеко рука от камеры.
+                const handSize = Math.hypot(middleMcp.x - wrist.x, middleMcp.y - wrist.y) || 0.15;
                 const pinchDist = Math.hypot(tip.x - thumbTip.x, tip.y - thumbTip.y);
-                grabbing = pinchDist < 0.06;
-                fingerDot.style.background = grabbing ? 'rgba(0,255,255,0.5)' : 'transparent';
+                const pinchRatio = pinchDist / handSize;
+
+                // Гистерезис: порог "схватить" ниже порога "отпустить",
+                // чтобы захват не дребезжал на границе значения.
+                const wasGrabbing = grabbing;
+                if (!wasGrabbing && pinchRatio < 0.45) {
+                    grabbing = true;
+                } else if (wasGrabbing && pinchRatio > 0.65) {
+                    grabbing = false;
+                }
+
+                // Обратная связь: вибрация в момент захвата + пульсация точки
+                if (grabbing && !wasGrabbing && navigator.vibrate) {
+                    navigator.vibrate(30);
+                }
+                fingerDot.style.background = grabbing ? 'rgba(0,255,255,0.6)' : 'transparent';
+                fingerDot.style.transform = grabbing
+                    ? 'translate(-50%,-50%) scale(1.6)'
+                    : 'translate(-50%,-50%) scale(1)';
+                fingerDot.style.transition = 'transform 0.12s ease, background 0.12s ease';
+
+                hint.textContent = grabbing ? 'Рука в камере: захват 🤏' : 'Рука в камере: найдена ✋';
             } else {
                 handActive = false;
                 grabbing = false;
+                smoothTipX = null; smoothTipY = null;
                 fingerDot.style.display = 'none';
                 hint.textContent = 'Рука в камере: не видна (покажи ладонь камере)';
             }
