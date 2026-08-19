@@ -5,40 +5,103 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>🔴 J.A.R.V.I.S. AR</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         body { background: #000; color: #0ff; font-family: monospace; overflow: hidden; }
         #container { width: 100vw; height: 100vh; position: relative; }
         video { width: 100%; height: 100%; object-fit: cover; filter: brightness(0.85) contrast(1.1); position: absolute; top:0; left:0; }
         #glcanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-        #hud { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
 
         #startScreen {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: #000; display: flex; flex-direction: column;
-            align-items: center; justify-content: center; z-index: 10;
+            align-items: center; justify-content: center; z-index: 20;
         }
         #startScreen h1 { font-size: 32px; margin-bottom: 20px; text-shadow: 0 0 20px #0ff; }
         #startBtn { padding: 20px 50px; font-size: 24px; background: #002233; color: #0ff; border: 3px solid #0ff; border-radius: 10px; cursor: pointer; }
         #error { color: #f00; margin-top: 20px; text-align: center; padding: 20px; }
 
-        #ui { position: absolute; bottom: 20px; left: 0; right: 0; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; padding: 10px; background: rgba(0,0,0,0.7); z-index: 5; }
-        .btn { padding: 15px 20px; font-size: 20px; background: #002233; color: #0ff; border: 2px solid #0ff; border-radius: 8px; }
-        .btn.active { background: #0ff; color: #000; }
-
         #title { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); font-size: 24px; text-shadow: 0 0 10px #0ff; background: rgba(0,0,0,0.5); padding: 10px 20px; border-radius: 10px; z-index: 5; }
 
-        .corner { position: absolute; width: 40px; height: 40px; border: 3px solid #0ff; filter: drop-shadow(0 0 6px #0ff); opacity: 0.8; }
+        .corner { position: absolute; width: 40px; height: 40px; border: 3px solid #0ff; filter: drop-shadow(0 0 6px #0ff); opacity: 0.8; z-index: 5; }
         .corner.tl { top: 15px; left: 15px; border-right: none; border-bottom: none; }
         .corner.tr { top: 15px; right: 15px; border-left: none; border-bottom: none; }
         .corner.bl { bottom: 15px; left: 15px; border-right: none; border-top: none; }
         .corner.br { bottom: 15px; right: 15px; border-left: none; border-top: none; }
+
+        /* --- Скрытое боковое меню слева --- */
+        #menuTab {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            transform: translateY(-50%);
+            width: 28px;
+            height: 90px;
+            background: rgba(0,20,30,0.75);
+            border: 2px solid #0ff;
+            border-left: none;
+            border-radius: 0 10px 10px 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #0ff;
+            font-size: 18px;
+            z-index: 15;
+            box-shadow: 0 0 12px rgba(0,255,255,0.5);
+            touch-action: none;
+        }
+
+        #sideMenu {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: 90px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+            background: rgba(0,10,20,0.85);
+            border-right: 2px solid #0ff;
+            transform: translateX(-100%);
+            transition: transform 0.25s ease;
+            z-index: 14;
+            padding: 10px;
+        }
+        #sideMenu.open { transform: translateX(0); }
+
+        .sbtn {
+            width: 64px;
+            height: 64px;
+            font-size: 26px;
+            background: #002233;
+            color: #0ff;
+            border: 2px solid #0ff;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .sbtn.active { background: #0ff; color: #000; }
+
+        #faceStatus {
+            position: absolute;
+            top: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 12px;
+            background: rgba(0,0,0,0.5);
+            padding: 4px 10px;
+            border-radius: 6px;
+            z-index: 5;
+            opacity: 0.8;
+        }
     </style>
 </head>
 <body>
     <div id="container">
         <video id="video" playsinline autoplay muted></video>
         <canvas id="glcanvas"></canvas>
-        <div id="hud"></div>
 
         <div class="corner tl"></div>
         <div class="corner tr"></div>
@@ -52,12 +115,16 @@
         </div>
 
         <div id="title">J.A.R.V.I.S. AR</div>
+        <div id="faceStatus">Слежение за лицом: —</div>
 
-        <div id="ui" style="display:none">
-            <button class="btn active" data-mode="1">🔷 Куб</button>
-            <button class="btn" data-mode="2">🔵 Сфера</button>
-            <button class="btn" data-mode="3">⭐ Звезда</button>
-            <button class="btn" data-mode="5">🎯 Кольца</button>
+        <!-- Вкладка-язычок, тянешь/тапаешь чтобы открыть меню -->
+        <div id="menuTab">☰</div>
+
+        <div id="sideMenu">
+            <button class="sbtn active" data-mode="1">🔷</button>
+            <button class="sbtn" data-mode="2">🔵</button>
+            <button class="sbtn" data-mode="3">⭐</button>
+            <button class="sbtn" data-mode="5">🎯</button>
         </div>
     </div>
 
@@ -66,10 +133,32 @@
         const video = document.getElementById('video');
         const startBtn = document.getElementById('startBtn');
         const startScreen = document.getElementById('startScreen');
-        const ui = document.getElementById('ui');
         const errorDiv = document.getElementById('error');
+        const menuTab = document.getElementById('menuTab');
+        const sideMenu = document.getElementById('sideMenu');
+        const faceStatus = document.getElementById('faceStatus');
 
         let mode = 1;
+
+        // ---------- Боковое меню: тап + свайп ----------
+        let menuOpen = false;
+        function setMenu(open) {
+            menuOpen = open;
+            sideMenu.classList.toggle('open', open);
+        }
+        menuTab.addEventListener('click', () => setMenu(!menuOpen));
+
+        let touchStartX = null;
+        document.addEventListener('touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+        }, { passive: true });
+        document.addEventListener('touchmove', (e) => {
+            if (touchStartX === null) return;
+            const dx = e.touches[0].clientX - touchStartX;
+            if (touchStartX < 40 && dx > 30) setMenu(true);
+            if (menuOpen && dx < -30) setMenu(false);
+        }, { passive: true });
+        document.addEventListener('touchend', () => { touchStartX = null; });
 
         // ---------- Three.js scene ----------
         const scene = new THREE.Scene();
@@ -162,7 +251,7 @@
         }
         window.addEventListener('resize', onResize);
 
-        // ---------- Camera stream ----------
+        // ---------- Камера ----------
         async function startCamera() {
             errorDiv.textContent = 'Подключаю камеру...';
             try {
@@ -175,8 +264,8 @@
                 video.srcObject = stream;
                 video.onloadedmetadata = () => {
                     startScreen.style.display = 'none';
-                    ui.style.display = 'flex';
                     onResize();
+                    initFaceTracking();
                     animate();
                 };
             } catch (e) {
@@ -184,7 +273,50 @@
             }
         }
 
-        // ---------- Animation loop ----------
+        // ---------- Слежение за лицом (экспериментально) ----------
+        // Используем нативный браузерный FaceDetector API, если он есть.
+        // Если браузер его не поддерживает — голограмма просто летает
+        // сама по себе (как раньше), это резервный режим.
+        let faceDetector = null;
+        let faceTarget = null; // { x, y } в нормализованных координатах -1..1
+        let faceSupported = false;
+
+        function initFaceTracking() {
+            if ('FaceDetector' in window) {
+                try {
+                    faceDetector = new FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
+                    faceSupported = true;
+                    faceStatus.textContent = 'Слежение за лицом: включено';
+                    detectFaceLoop();
+                    return;
+                } catch (e) {
+                    faceSupported = false;
+                }
+            }
+            faceStatus.textContent = 'Слежение за лицом: не поддерживается браузером (автодвижение)';
+        }
+
+        async function detectFaceLoop() {
+            if (!faceSupported) return;
+            try {
+                const faces = await faceDetector.detect(video);
+                if (faces.length > 0) {
+                    const box = faces[0].boundingBox;
+                    const cx = box.x + box.width / 2;
+                    const cy = box.y + box.height / 2;
+                    const nx = (cx / video.videoWidth) * 2 - 1;
+                    const ny = (cy / video.videoHeight) * 2 - 1;
+                    faceTarget = { x: nx, y: ny };
+                } else {
+                    faceTarget = null;
+                }
+            } catch (e) {
+                // тихо игнорируем разовые ошибки детекции
+            }
+            setTimeout(detectFaceLoop, 200);
+        }
+
+        // ---------- Анимация ----------
         let t = 0;
         function animate() {
             requestAnimationFrame(animate);
@@ -192,7 +324,16 @@
 
             holoGroup.rotation.y += 0.012;
             holoGroup.rotation.x = Math.sin(t * 0.5) * 0.15;
-            holoGroup.position.y = Math.sin(t * 1.2) * 0.08;
+
+            if (faceSupported && faceTarget) {
+                const targetX = faceTarget.x * 2.2;
+                const targetY = -faceTarget.y * 1.4;
+                holoGroup.position.x += (targetX - holoGroup.position.x) * 0.08;
+                holoGroup.position.y += (targetY - holoGroup.position.y) * 0.08;
+            } else {
+                holoGroup.position.x = Math.sin(t * 0.3) * 1.2;
+                holoGroup.position.y = Math.cos(t * 0.4) * 0.6;
+            }
 
             holoGroup.visible = Math.random() > 0.01;
 
@@ -206,11 +347,12 @@
             renderer.render(scene, camera);
         }
 
-        document.querySelectorAll('.btn').forEach(btn => {
+        document.querySelectorAll('.sbtn').forEach(btn => {
             btn.addEventListener('click', () => {
-                document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.sbtn').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 setMode(parseInt(btn.dataset.mode));
+                setMenu(false);
             });
         });
 
