@@ -29,72 +29,53 @@
         .corner.br { bottom: 15px; right: 15px; border-left: none; border-top: none; }
 
         #menuTab {
-            position: absolute;
-            top: 50%;
-            left: 0;
-            transform: translateY(-50%);
-            width: 28px;
-            height: 90px;
+            position: absolute; top: 50%; left: 0; transform: translateY(-50%);
+            width: 28px; height: 90px;
             background: rgba(0,20,30,0.75);
-            border: 2px solid #0ff;
-            border-left: none;
+            border: 2px solid #0ff; border-left: none;
             border-radius: 0 10px 10px 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #0ff;
-            font-size: 18px;
-            z-index: 15;
+            display: flex; align-items: center; justify-content: center;
+            color: #0ff; font-size: 18px; z-index: 15;
             box-shadow: 0 0 12px rgba(0,255,255,0.5);
             touch-action: none;
         }
 
         #sideMenu {
-            position: absolute;
-            top: 0;
-            left: 0;
-            height: 100%;
-            width: 90px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
+            position: absolute; top: 0; left: 0; height: 100%; width: 90px;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
             gap: 14px;
             background: rgba(0,10,20,0.85);
             border-right: 2px solid #0ff;
             transform: translateX(-100%);
             transition: transform 0.25s ease;
-            z-index: 14;
-            padding: 10px;
+            z-index: 14; padding: 10px;
         }
         #sideMenu.open { transform: translateX(0); }
 
         .sbtn {
-            width: 64px;
-            height: 64px;
-            font-size: 26px;
-            background: #002233;
-            color: #0ff;
-            border: 2px solid #0ff;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            width: 64px; height: 64px; font-size: 26px;
+            background: #002233; color: #0ff; border: 2px solid #0ff; border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
         }
         .sbtn.active { background: #0ff; color: #000; }
 
         #hint {
+            position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+            font-size: 11px; background: rgba(0,0,0,0.5); padding: 4px 10px; border-radius: 6px;
+            z-index: 5; opacity: 0.8; white-space: nowrap; text-align: center;
+        }
+
+        /* Точка-курсор кончика пальца, для наглядности пока подстраиваешь руку */
+        #fingerDot {
             position: absolute;
-            bottom: 16px;
-            left: 50%;
-            transform: translateX(-50%);
-            font-size: 11px;
-            background: rgba(0,0,0,0.5);
-            padding: 4px 10px;
-            border-radius: 6px;
-            z-index: 5;
-            opacity: 0.7;
-            white-space: nowrap;
+            width: 18px; height: 18px;
+            border: 2px solid #0ff;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #0ff;
+            transform: translate(-50%, -50%);
+            display: none;
+            z-index: 6;
+            pointer-events: none;
         }
     </style>
 </head>
@@ -102,6 +83,7 @@
     <div id="container">
         <video id="video" playsinline autoplay muted></video>
         <canvas id="glcanvas"></canvas>
+        <div id="fingerDot"></div>
 
         <div class="corner tl"></div>
         <div class="corner tr"></div>
@@ -115,7 +97,7 @@
         </div>
 
         <div id="title">J.A.R.V.I.S. AR</div>
-        <div id="hint">👆 Тяни и отпусти объект пальцем</div>
+        <div id="hint">Рука в камере: —</div>
 
         <div id="menuTab">☰</div>
 
@@ -128,6 +110,7 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <script>
         const video = document.getElementById('video');
         const startBtn = document.getElementById('startBtn');
@@ -136,10 +119,12 @@
         const menuTab = document.getElementById('menuTab');
         const sideMenu = document.getElementById('sideMenu');
         const glcanvas = document.getElementById('glcanvas');
+        const hint = document.getElementById('hint');
+        const fingerDot = document.getElementById('fingerDot');
 
         let mode = 1;
 
-        // ---------- Боковое меню: тап + свайп ----------
+        // ---------- Боковое меню ----------
         let menuOpen = false;
         function setMenu(open) {
             menuOpen = open;
@@ -159,34 +144,25 @@
         const CYAN = 0x00f0ff;
 
         let holoGroup = new THREE.Group();
-        // Объект теперь заметно меньше — не занимает весь маленький экран
         holoGroup.scale.set(0.45, 0.45, 0.45);
         scene.add(holoGroup);
 
         function clearHolo() {
             while (holoGroup.children.length) holoGroup.remove(holoGroup.children[0]);
         }
-
         function glowLineMaterial(opacity = 1) {
             return new THREE.LineBasicMaterial({ color: CYAN, transparent: true, opacity });
         }
-
         function addWireframe(geometry) {
             const edges = new THREE.EdgesGeometry(geometry);
             const line = new THREE.LineSegments(edges, glowLineMaterial());
             holoGroup.add(line);
-
             const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
                 color: CYAN, transparent: true, opacity: 0.06, side: THREE.DoubleSide
             }));
             holoGroup.add(mesh);
         }
-
-        function buildCube() {
-            clearHolo();
-            addWireframe(new THREE.BoxGeometry(1.6, 1.6, 1.6));
-        }
-
+        function buildCube() { clearHolo(); addWireframe(new THREE.BoxGeometry(1.6, 1.6, 1.6)); }
         function buildSphere() {
             clearHolo();
             addWireframe(new THREE.SphereGeometry(1, 16, 12));
@@ -199,12 +175,7 @@
                 holoGroup.add(ring);
             }
         }
-
-        function buildStar() {
-            clearHolo();
-            addWireframe(new THREE.IcosahedronGeometry(1.1, 0));
-        }
-
+        function buildStar() { clearHolo(); addWireframe(new THREE.IcosahedronGeometry(1.1, 0)); }
         function buildRings() {
             clearHolo();
             for (let i = 0; i < 4; i++) {
@@ -217,13 +188,9 @@
                 ring.userData.spin = 0.005 + i * 0.002;
                 holoGroup.add(ring);
             }
-            const core = new THREE.Mesh(
-                new THREE.SphereGeometry(0.15, 12, 12),
-                new THREE.MeshBasicMaterial({ color: CYAN })
-            );
+            const core = new THREE.Mesh(new THREE.SphereGeometry(0.15, 12, 12), new THREE.MeshBasicMaterial({ color: CYAN }));
             holoGroup.add(core);
         }
-
         function setMode(m) {
             mode = m;
             if (m === 1) buildCube();
@@ -240,7 +207,7 @@
         }
         window.addEventListener('resize', onResize);
 
-        // ---------- Камера + попытка широкого/0.5x зума ----------
+        // ---------- Камера ----------
         async function startCamera() {
             errorDiv.textContent = 'Подключаю камеру...';
             try {
@@ -252,74 +219,134 @@
                 }
                 video.srcObject = stream;
 
-                // Пытаемся выставить минимальный zoom (аналог 0.5x),
-                // если браузер/устройство поддерживает такой констрейнт.
-                // Работает не на всех телефонах — тихо игнорируем ошибку.
                 try {
                     const track = stream.getVideoTracks()[0];
                     const caps = track.getCapabilities ? track.getCapabilities() : null;
                     if (caps && caps.zoom) {
                         await track.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] });
                     }
-                } catch (e) {
-                    // не критично, просто нет доступа к zoom через веб
-                }
+                } catch (e) { /* необязательно, игнорируем */ }
 
                 video.onloadedmetadata = () => {
                     startScreen.style.display = 'none';
                     onResize();
                     animate();
+                    initHandTracking();
                 };
             } catch (e) {
                 errorDiv.textContent = 'Ошибка: ' + e.message;
             }
         }
 
-        // ---------- Управление пальцем: перетаскивание + бросок ----------
-        let dragging = false;
-        let lastX = 0, lastY = 0;
-        let lastTime = 0;
-        let velX = 0, velY = 0;
-
-        function screenToWorldDelta(dx, dy) {
-            // Переводим пиксели экрана в условные единицы сцены
-            const k = 0.0045;
-            return { x: dx * k, y: -dy * k };
+        // ---------- Перевод координат экрана в мировые координаты сцены ----------
+        function screenPxToWorld(px, py) {
+            // px, py — координаты в пикселях экрана (0..innerWidth/Height)
+            const ndcX = (px / window.innerWidth) * 2 - 1;
+            const ndcY = -((py / window.innerHeight) * 2 - 1);
+            const distanceFromCamera = camera.position.z; // holoGroup находится примерно на z=0
+            const vFOV = (camera.fov * Math.PI) / 180;
+            const halfHeight = Math.tan(vFOV / 2) * distanceFromCamera;
+            const halfWidth = halfHeight * camera.aspect;
+            return { x: ndcX * halfWidth, y: ndcY * halfHeight };
         }
+
+        // ---------- Управление пальцем ПО ЭКРАНУ (запасной вариант) ----------
+        let dragging = false;
+        let lastX = 0, lastY = 0, lastTime = 0;
+        let velX = 0, velY = 0;
 
         glcanvas.addEventListener('pointerdown', (e) => {
             dragging = true;
-            lastX = e.clientX;
-            lastY = e.clientY;
-            lastTime = performance.now();
+            lastX = e.clientX; lastY = e.clientY; lastTime = performance.now();
             velX = 0; velY = 0;
             glcanvas.setPointerCapture(e.pointerId);
         });
-
         glcanvas.addEventListener('pointermove', (e) => {
-            if (!dragging) return;
+            if (!dragging || handActive) return; // если рука активна, экран не мешает
             const now = performance.now();
             const dt = Math.max(now - lastTime, 1);
-            const dx = e.clientX - lastX;
-            const dy = e.clientY - lastY;
-            const delta = screenToWorldDelta(dx, dy);
-            holoGroup.position.x += delta.x;
-            holoGroup.position.y += delta.y;
-
-            // скорость для инерции при отпускании (бросок)
-            velX = delta.x / dt * 16;
-            velY = delta.y / dt * 16;
-
-            lastX = e.clientX;
-            lastY = e.clientY;
-            lastTime = now;
+            const dx = e.clientX - lastX, dy = e.clientY - lastY;
+            const k = 0.0045;
+            holoGroup.position.x += dx * k;
+            holoGroup.position.y -= dy * k;
+            velX = dx * k / dt * 16;
+            velY = -dy * k / dt * 16;
+            lastX = e.clientX; lastY = e.clientY; lastTime = now;
         });
-
-        function endDrag() {
-            dragging = false;
-        }
+        function endDrag() { dragging = false; }
         glcanvas.addEventListener('pointerup', endDrag);
         glcanvas.addEventListener('pointercancel', endDrag);
+
+        // ---------- Управление РУКОЙ ЧЕРЕЗ КАМЕРУ (MediaPipe Hands) ----------
+        // Экспериментально: если библиотека не загрузится или телефон
+        // не потянет — просто ничего не произойдёт, останется управление
+        // пальцем по экрану (см. выше).
+        let handActive = false;
+        let handTargetWorld = null;
+        let grabbing = false;
+
+        function initHandTracking() {
+            if (typeof Hands === 'undefined') {
+                hint.textContent = 'Рука в камере: библиотека не загрузилась (используй палец по экрану)';
+                return;
+            }
+            try {
+                const hands = new Hands({
+                    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+                });
+                hands.setOptions({
+                    maxNumHands: 1,
+                    modelComplexity: 0, // облегчённая модель — важно для скорости на телефоне
+                    minDetectionConfidence: 0.6,
+                    minTrackingConfidence: 0.5
+                });
+                hands.onResults(onHandResults);
+
+                hint.textContent = 'Рука в камере: запускаю распознавание...';
+
+                async function handLoop() {
+                    if (video.readyState >= 2) {
+                        await hands.send({ image: video });
+                    }
+                    requestAnimationFrame(handLoop);
+                }
+                handLoop();
+            } catch (e) {
+                hint.textContent = 'Рука в камере: не удалось запустить';
+            }
+        }
+
+        function onHandResults(results) {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                handActive = true;
+                hint.textContent = 'Рука в камере: найдена ✋';
+
+                const lm = results.multiHandLandmarks[0];
+                const tip = lm[8]; // кончик указательного пальца
+                const thumbTip = lm[4]; // кончик большого пальца
+
+                // MediaPipe отдаёт нормализованные 0..1 координаты
+                // относительно кадра video (facingMode environment — без зеркала)
+                const px = tip.x * window.innerWidth;
+                const py = tip.y * window.innerHeight;
+
+                handTargetWorld = screenPxToWorld(px, py);
+
+                fingerDot.style.display = 'block';
+                fingerDot.style.left = px + 'px';
+                fingerDot.style.top = py + 'px';
+
+                // "щипок" большим+указательным пальцем = захват объекта
+                const pinchDist = Math.hypot(tip.x - thumbTip.x, tip.y - thumbTip.y);
+                grabbing = pinchDist < 0.06;
+                fingerDot.style.background = grabbing ? 'rgba(0,255,255,0.5)' : 'transparent';
+            } else {
+                handActive = false;
+                grabbing = false;
+                fingerDot.style.display = 'none';
+                hint.textContent = 'Рука в камере: не видна (покажи ладонь камере)';
+            }
+        }
 
         // ---------- Анимация ----------
         let t = 0;
@@ -330,12 +357,15 @@
             holoGroup.rotation.y += 0.012;
             holoGroup.rotation.x = Math.sin(t * 0.5) * 0.15;
 
-            // Инерция после отпускания пальца — плавно гасим скорость
-            if (!dragging && (Math.abs(velX) > 0.0001 || Math.abs(velY) > 0.0001)) {
+            if (handActive && handTargetWorld) {
+                // плавно тянемся к позиции пальца, только пока щипок ("захват")
+                const followSpeed = grabbing ? 0.25 : 0.06;
+                holoGroup.position.x += (handTargetWorld.x - holoGroup.position.x) * followSpeed;
+                holoGroup.position.y += (handTargetWorld.y - holoGroup.position.y) * followSpeed;
+            } else if (!dragging && (Math.abs(velX) > 0.0001 || Math.abs(velY) > 0.0001)) {
                 holoGroup.position.x += velX;
                 holoGroup.position.y += velY;
-                velX *= 0.92;
-                velY *= 0.92;
+                velX *= 0.92; velY *= 0.92;
             }
 
             holoGroup.visible = Math.random() > 0.01;
