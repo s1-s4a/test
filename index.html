@@ -9,7 +9,7 @@
         body { background: #000; color: #0ff; font-family: monospace; overflow: hidden; }
         #container { width: 100vw; height: 100vh; position: relative; }
         video { width: 100%; height: 100%; object-fit: cover; filter: brightness(0.85) contrast(1.1); position: absolute; top:0; left:0; }
-        #glcanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        #glcanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; touch-action: none; }
 
         #startScreen {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -28,7 +28,6 @@
         .corner.bl { bottom: 15px; left: 15px; border-right: none; border-top: none; }
         .corner.br { bottom: 15px; right: 15px; border-left: none; border-top: none; }
 
-        /* --- Скрытое боковое меню слева --- */
         #menuTab {
             position: absolute;
             top: 50%;
@@ -84,17 +83,18 @@
         }
         .sbtn.active { background: #0ff; color: #000; }
 
-        #faceStatus {
+        #hint {
             position: absolute;
-            top: 70px;
+            bottom: 16px;
             left: 50%;
             transform: translateX(-50%);
-            font-size: 12px;
+            font-size: 11px;
             background: rgba(0,0,0,0.5);
             padding: 4px 10px;
             border-radius: 6px;
             z-index: 5;
-            opacity: 0.8;
+            opacity: 0.7;
+            white-space: nowrap;
         }
     </style>
 </head>
@@ -115,9 +115,8 @@
         </div>
 
         <div id="title">J.A.R.V.I.S. AR</div>
-        <div id="faceStatus">Слежение за лицом: —</div>
+        <div id="hint">👆 Тяни и отпусти объект пальцем</div>
 
-        <!-- Вкладка-язычок, тянешь/тапаешь чтобы открыть меню -->
         <div id="menuTab">☰</div>
 
         <div id="sideMenu">
@@ -136,7 +135,7 @@
         const errorDiv = document.getElementById('error');
         const menuTab = document.getElementById('menuTab');
         const sideMenu = document.getElementById('sideMenu');
-        const faceStatus = document.getElementById('faceStatus');
+        const glcanvas = document.getElementById('glcanvas');
 
         let mode = 1;
 
@@ -148,30 +147,20 @@
         }
         menuTab.addEventListener('click', () => setMenu(!menuOpen));
 
-        let touchStartX = null;
-        document.addEventListener('touchstart', (e) => {
-            touchStartX = e.touches[0].clientX;
-        }, { passive: true });
-        document.addEventListener('touchmove', (e) => {
-            if (touchStartX === null) return;
-            const dx = e.touches[0].clientX - touchStartX;
-            if (touchStartX < 40 && dx > 30) setMenu(true);
-            if (menuOpen && dx < -30) setMenu(false);
-        }, { passive: true });
-        document.addEventListener('touchend', () => { touchStartX = null; });
-
         // ---------- Three.js scene ----------
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
         camera.position.z = 5;
 
-        const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('glcanvas'), alpha: true, antialias: true });
+        const renderer = new THREE.WebGLRenderer({ canvas: glcanvas, alpha: true, antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(window.devicePixelRatio);
 
         const CYAN = 0x00f0ff;
 
         let holoGroup = new THREE.Group();
+        // Объект теперь заметно меньше — не занимает весь маленький экран
+        holoGroup.scale.set(0.45, 0.45, 0.45);
         scene.add(holoGroup);
 
         function clearHolo() {
@@ -251,7 +240,7 @@
         }
         window.addEventListener('resize', onResize);
 
-        // ---------- Камера ----------
+        // ---------- Камера + попытка широкого/0.5x зума ----------
         async function startCamera() {
             errorDiv.textContent = 'Подключаю камеру...';
             try {
@@ -262,10 +251,23 @@
                     stream = await navigator.mediaDevices.getUserMedia({ video: true });
                 }
                 video.srcObject = stream;
+
+                // Пытаемся выставить минимальный zoom (аналог 0.5x),
+                // если браузер/устройство поддерживает такой констрейнт.
+                // Работает не на всех телефонах — тихо игнорируем ошибку.
+                try {
+                    const track = stream.getVideoTracks()[0];
+                    const caps = track.getCapabilities ? track.getCapabilities() : null;
+                    if (caps && caps.zoom) {
+                        await track.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] });
+                    }
+                } catch (e) {
+                    // не критично, просто нет доступа к zoom через веб
+                }
+
                 video.onloadedmetadata = () => {
                     startScreen.style.display = 'none';
                     onResize();
-                    initFaceTracking();
                     animate();
                 };
             } catch (e) {
@@ -273,48 +275,51 @@
             }
         }
 
-        // ---------- Слежение за лицом (экспериментально) ----------
-        // Используем нативный браузерный FaceDetector API, если он есть.
-        // Если браузер его не поддерживает — голограмма просто летает
-        // сама по себе (как раньше), это резервный режим.
-        let faceDetector = null;
-        let faceTarget = null; // { x, y } в нормализованных координатах -1..1
-        let faceSupported = false;
+        // ---------- Управление пальцем: перетаскивание + бросок ----------
+        let dragging = false;
+        let lastX = 0, lastY = 0;
+        let lastTime = 0;
+        let velX = 0, velY = 0;
 
-        function initFaceTracking() {
-            if ('FaceDetector' in window) {
-                try {
-                    faceDetector = new FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
-                    faceSupported = true;
-                    faceStatus.textContent = 'Слежение за лицом: включено';
-                    detectFaceLoop();
-                    return;
-                } catch (e) {
-                    faceSupported = false;
-                }
-            }
-            faceStatus.textContent = 'Слежение за лицом: не поддерживается браузером (автодвижение)';
+        function screenToWorldDelta(dx, dy) {
+            // Переводим пиксели экрана в условные единицы сцены
+            const k = 0.0045;
+            return { x: dx * k, y: -dy * k };
         }
 
-        async function detectFaceLoop() {
-            if (!faceSupported) return;
-            try {
-                const faces = await faceDetector.detect(video);
-                if (faces.length > 0) {
-                    const box = faces[0].boundingBox;
-                    const cx = box.x + box.width / 2;
-                    const cy = box.y + box.height / 2;
-                    const nx = (cx / video.videoWidth) * 2 - 1;
-                    const ny = (cy / video.videoHeight) * 2 - 1;
-                    faceTarget = { x: nx, y: ny };
-                } else {
-                    faceTarget = null;
-                }
-            } catch (e) {
-                // тихо игнорируем разовые ошибки детекции
-            }
-            setTimeout(detectFaceLoop, 200);
+        glcanvas.addEventListener('pointerdown', (e) => {
+            dragging = true;
+            lastX = e.clientX;
+            lastY = e.clientY;
+            lastTime = performance.now();
+            velX = 0; velY = 0;
+            glcanvas.setPointerCapture(e.pointerId);
+        });
+
+        glcanvas.addEventListener('pointermove', (e) => {
+            if (!dragging) return;
+            const now = performance.now();
+            const dt = Math.max(now - lastTime, 1);
+            const dx = e.clientX - lastX;
+            const dy = e.clientY - lastY;
+            const delta = screenToWorldDelta(dx, dy);
+            holoGroup.position.x += delta.x;
+            holoGroup.position.y += delta.y;
+
+            // скорость для инерции при отпускании (бросок)
+            velX = delta.x / dt * 16;
+            velY = delta.y / dt * 16;
+
+            lastX = e.clientX;
+            lastY = e.clientY;
+            lastTime = now;
+        });
+
+        function endDrag() {
+            dragging = false;
         }
+        glcanvas.addEventListener('pointerup', endDrag);
+        glcanvas.addEventListener('pointercancel', endDrag);
 
         // ---------- Анимация ----------
         let t = 0;
@@ -325,14 +330,12 @@
             holoGroup.rotation.y += 0.012;
             holoGroup.rotation.x = Math.sin(t * 0.5) * 0.15;
 
-            if (faceSupported && faceTarget) {
-                const targetX = faceTarget.x * 2.2;
-                const targetY = -faceTarget.y * 1.4;
-                holoGroup.position.x += (targetX - holoGroup.position.x) * 0.08;
-                holoGroup.position.y += (targetY - holoGroup.position.y) * 0.08;
-            } else {
-                holoGroup.position.x = Math.sin(t * 0.3) * 1.2;
-                holoGroup.position.y = Math.cos(t * 0.4) * 0.6;
+            // Инерция после отпускания пальца — плавно гасим скорость
+            if (!dragging && (Math.abs(velX) > 0.0001 || Math.abs(velY) > 0.0001)) {
+                holoGroup.position.x += velX;
+                holoGroup.position.y += velY;
+                velX *= 0.92;
+                velY *= 0.92;
             }
 
             holoGroup.visible = Math.random() > 0.01;
