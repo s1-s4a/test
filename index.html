@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>🔴 J.A.R.V.I.S. AR</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            background: #000;
+            color: #0ff;
+            font-family: monospace;
+            overflow: hidden;
+        }
+        
+        #container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+        
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        
+        #startScreen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+        
+        #startScreen h1 {
+            font-size: 32px;
+            margin-bottom: 20px;
+            text-shadow: 0 0 20px #0ff;
+        }
+        
+        #startBtn {
+            padding: 20px 50px;
+            font-size: 24px;
+            background: #002233;
+            color: #0ff;
+            border: 3px solid #0ff;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+        
+        #error {
+            color: #f00;
+            margin-top: 20px;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        #ui {
+            position: absolute;
+            bottom: 20px;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            padding: 10px;
+            background: rgba(0,0,0,0.7);
+        }
+        
+        .btn {
+            padding: 15px 20px;
+            font-size: 20px;
+            background: #002233;
+            color: #0ff;
+            border: 2px solid #0ff;
+            border-radius: 8px;
+        }
+        
+        .btn.active {
+            background: #0ff;
+            color: #000;
+        }
+        
+        #title {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 24px;
+            text-shadow: 0 0 10px #0ff;
+            background: rgba(0,0,0,0.5);
+            padding: 10px 20px;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <video id="video" playsinline autoplay muted></video>
+        <canvas id="canvas"></canvas>
+        
+        <div id="startScreen">
+            <h1>🔴 J.A.R.V.I.S. AR</h1>
+            <button id="startBtn">▶ ЗАПУСТИТЬ</button>
+            <div id="error"></div>
+        </div>
+        
+        <div id="title">J.A.R.V.I.S. AR</div>
+        
+        <div id="ui" style="display:none">
+            <button class="btn active" data-mode="1">🔷</button>
+            <button class="btn" data-mode="2">🔵</button>
+            <button class="btn" data-mode="3">⭐</button>
+            <button class="btn" data-mode="4">⚡</button>
+            <button class="btn" data-mode="5">🎯</button>
+            <button class="btn" data-mode="0">❌</button>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const startBtn = document.getElementById('startBtn');
+        const startScreen = document.getElementById('startScreen');
+        const ui = document.getElementById('ui');
+        const errorDiv = document.getElementById('error');
+        
+        let mode = 1;
+        let running = false;
+        let objX = 0, objY = 0;
+        let frameCount = 0;
+        
+        const COLOR = '#00ffff';
+        const COLOR2 = '#ffa500';
+        
+        async function startCamera() {
+            errorDiv.textContent = 'Подключаю камеру...';
+            
+            try {
+                // Пробуем разные варианты
+                let stream = null;
+                
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: 'environment' }
+                    });
+                } catch (e) {
+                    try {
+                        stream = await navigator.mediaDevices.getUserMedia({
+                            video: true
+                        });
+                    } catch (e2) {
+                        throw new Error('Камера недоступна');
+                    }
+                }
+                
+                video.srcObject = stream;
+                
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    
+                    objX = canvas.width / 2;
+                    objY = canvas.height / 2;
+                    
+                    startScreen.style.display = 'none';
+                    ui.style.display = 'flex';
+                    running = true;
+                    
+                    processFrame();
+                };
+                
+            } catch (e) {
+                errorDiv.textContent = 'Ошибка: ' + e.message;
+            }
+        }
+        
+        function drawCube(x, y) {
+            const size = 60;
+            const offset = 25;
+            
+            ctx.strokeStyle = COLOR;
+            ctx.lineWidth = 4;
+            
+            ctx.strokeRect(x - size, y - size, size * 2, size * 2);
+            ctx.strokeRect(x - size + offset, y - size - offset, size * 2, size * 2);
+            
+            ctx.beginPath();
+            ctx.moveTo(x - size, y - size);
+            ctx.lineTo(x - size + offset, y - size - offset);
+            ctx.moveTo(x + size, y - size);
+            ctx.lineTo(x + size + offset, y - size - offset);
+            ctx.moveTo(x + size, y + size);
+            ctx.lineTo(x + size + offset, y + size - offset);
+            ctx.moveTo(x - size, y + size);
+            ctx.lineTo(x - size + offset, y + size - offset);
+            ctx.stroke();
+            
+            ctx.fillStyle = COLOR2;
+            ctx.beginPath();
+            ctx.arc(x, y, 8, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        function drawSphere(x, y) {
+            const r = 70;
+            
+            ctx.strokeStyle = COLOR;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(x, y, r - 15, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            for (let i = 0; i < 3; i++) {
+                ctx.beginPath();
+                ctx.ellipse(x, y, r - i*20, (r - i*20) * 0.6, frameCount * 0.02 + i, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            
+            ctx.fillStyle = COLOR2;
+            ctx.beginPath();
+            ctx.arc(x, y, 10, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        function drawStar(x, y) {
+            const size = 80;
+            ctx.strokeStyle = COLOR;
+            ctx.lineWidth = 4;
+            ctx.fillStyle = COLOR2;
+            
+            ctx.beginPath();
+            for (let i = 0; i < 10; i++) {
+                const angle = (i * Math.PI / 5) + frameCount * 0.02;
+                const r = i % 2 === 0 ? size : size / 2;
+                const px = x + r * Math.cos(angle);
+                const py = y + r * Math.sin(angle);
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.stroke();
+            ctx.fill();
+            
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(x, y, 8, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        function drawEnergy(x, y) {
+            ctx.strokeStyle = COLOR;
+            ctx.lineWidth = 3;
+            
+            for (let i = 0; i < 8; i++) {
+                const angle = (i * Math.PI / 4) + frameCount * 0.05;
+                const r = 60 - i * 5;
+                const px = x + r * Math.cos(angle);
+                const py = y + r * Math.sin(angle);
+                ctx.beginPath();
+                ctx.arc(px, py, 12 - i, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            
+            ctx.beginPath();
+            ctx.arc(x, y, 50, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            ctx.fillStyle = COLOR2;
+            ctx.beginPath();
+            ctx.arc(x, y, 15, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        function drawShield(x, y) {
+            const r = 80;
+            
+            ctx.strokeStyle = COLOR;
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(x, y, r - 20, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            ctx.beginPath();
+            for (let i = 0; i < 5; i++) {
+                const angle = (i * 72 - 90) * Math.PI / 180;
+                const px = x + 35 * Math.cos(angle);
+                const py = y + 35 * Math.sin(angle);
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.stroke();
+        }
+        
+        function processFrame() {
+            if (!running) return;
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Автоматическое движение (демо)
+            objX = canvas.width / 2 + Math.sin(frameCount * 0.03) * 100;
+            objY = canvas.height / 2 + Math.cos(frameCount * 0.02) * 80;
+            
+            if (mode === 1) drawCube(objX, objY);
+            else if (mode === 2) drawSphere(objX, objY);
+            else if (mode === 3) drawStar(objX, objY);
+            else if (mode === 4) drawEnergy(objX, objY);
+            else if (mode === 5) drawShield(objX, objY);
+            
+            // Прицел
+            ctx.strokeStyle = COLOR;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(objX, objY, 40, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(objX - 60, objY);
+            ctx.lineTo(objX - 30, objY);
+            ctx.moveTo(objX + 30, objY);
+            ctx.lineTo(objX + 60, objY);
+            ctx.moveTo(objX, objY - 60);
+            ctx.lineTo(objX, objY - 30);
+            ctx.moveTo(objX, objY + 30);
+            ctx.lineTo(objX, objY + 60);
+            ctx.stroke();
+            
+            // Текст
+            ctx.fillStyle = COLOR;
+            ctx.font = '20px monospace';
+            ctx.fillText('J.A.R.V.I.S.', 20, 40);
+            ctx.fillText('MODE: ' + mode, 20, 70);
+            
+            frameCount++;
+            requestAnimationFrame(processFrame);
+        }
+        
+        document.querySelectorAll('.btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                mode = parseInt(btn.dataset.mode);
+            });
+        });
+        
+        startBtn.addEventListener('click', startCamera);
+    </script>
+</body>
+</html>
