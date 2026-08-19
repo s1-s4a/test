@@ -255,14 +255,59 @@
         let lastX = 0, lastY = 0, lastTime = 0;
         let velX = 0, velY = 0;
 
+        // ---------- Управление ДВУМЯ ПАЛЬЦАМИ: щипок = масштаб, поворот = вращение ----------
+        const activePointers = new Map(); // pointerId -> {x, y}
+        let twoFingerActive = false;
+        let startDist = 0, startAngle = 0;
+        let startScale = 0.45, startRotY = 0;
+        const BASE_SCALE = 0.45;
+        let currentScale = BASE_SCALE;
+        const MIN_SCALE = 0.15, MAX_SCALE = 1.3;
+
+        function twoFingerSnapshot() {
+            const pts = [...activePointers.values()];
+            const dx = pts[1].x - pts[0].x, dy = pts[1].y - pts[0].y;
+            return { dist: Math.hypot(dx, dy), angle: Math.atan2(dy, dx) };
+        }
+
         glcanvas.addEventListener('pointerdown', (e) => {
-            dragging = true;
-            lastX = e.clientX; lastY = e.clientY; lastTime = performance.now();
-            velX = 0; velY = 0;
+            activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
             glcanvas.setPointerCapture(e.pointerId);
+
+            if (activePointers.size === 2) {
+                // начинаем жест двумя пальцами — одиночное перетаскивание выключаем
+                dragging = false;
+                twoFingerActive = true;
+                const snap = twoFingerSnapshot();
+                startDist = snap.dist;
+                startAngle = snap.angle;
+                startScale = currentScale;
+                startRotY = holoGroup.rotation.y;
+            } else if (activePointers.size === 1) {
+                dragging = true;
+                lastX = e.clientX; lastY = e.clientY; lastTime = performance.now();
+                velX = 0; velY = 0;
+            }
         });
+
         glcanvas.addEventListener('pointermove', (e) => {
-            if (!dragging || handActive) return; // если рука активна, экран не мешает
+            if (!activePointers.has(e.pointerId)) return;
+            activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+            if (twoFingerActive && activePointers.size === 2) {
+                const snap = twoFingerSnapshot();
+                // масштаб — по изменению расстояния между пальцами
+                const scaleFactor = snap.dist / (startDist || 1);
+                currentScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, startScale * scaleFactor));
+                holoGroup.scale.set(currentScale, currentScale, currentScale);
+
+                // вращение — по изменению угла между пальцами
+                const angleDelta = snap.angle - startAngle;
+                holoGroup.rotation.y = startRotY + angleDelta;
+                return;
+            }
+
+            if (!dragging || handActive || activePointers.size !== 1) return;
             const now = performance.now();
             const dt = Math.max(now - lastTime, 1);
             const dx = e.clientX - lastX, dy = e.clientY - lastY;
@@ -273,7 +318,22 @@
             velY = -dy * k / dt * 16;
             lastX = e.clientX; lastY = e.clientY; lastTime = now;
         });
-        function endDrag() { dragging = false; }
+
+        function endDrag(e) {
+            activePointers.delete(e.pointerId);
+            if (activePointers.size < 2) {
+                twoFingerActive = false;
+            }
+            if (activePointers.size === 1) {
+                // остался один палец — продолжаем перетаскивание с него
+                const [id, pt] = [...activePointers.entries()][0];
+                dragging = true;
+                lastX = pt.x; lastY = pt.y; lastTime = performance.now();
+                velX = 0; velY = 0;
+            } else if (activePointers.size === 0) {
+                dragging = false;
+            }
+        }
         glcanvas.addEventListener('pointerup', endDrag);
         glcanvas.addEventListener('pointercancel', endDrag);
 
