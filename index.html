@@ -59,14 +59,6 @@
         }
         .sbtn.active { background: #0ff; color: #000; }
 
-        #scanBtn {
-            width: 64px; height: 64px; font-size: 26px;
-            background: #002233; color: #0ff; border: 2px solid #0ff; border-radius: 12px;
-            display: flex; align-items: center; justify-content: center;
-            margin-top: 10px;
-        }
-        #scanBtn.scanning { background: #0ff; color: #000; animation: pulseMic 0.5s infinite; }
-
         #voiceBtn {
             width: 64px; height: 64px; font-size: 26px;
             background: #002233; color: #0ff; border: 2px solid #0ff; border-radius: 12px;
@@ -132,11 +124,27 @@
             <button class="sbtn" data-mode="2">🔵</button>
             <button class="sbtn" data-mode="3">⭐</button>
             <button class="sbtn" data-mode="5">🎯</button>
-            <button id="scanBtn">📷</button>
             <button id="voiceBtn">🎤</button>
+            <button id="arGlassesBtn">🥽</button>
         </div>
         <div id="voiceStatus"></div>
     </div>
+
+    <style>
+        #arGlassesBtn {
+            width: 64px; height: 64px; font-size: 26px;
+            background: #002233; color: #0ff; border: 2px solid #0ff; border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        #arGlassesBtn.active { background: #0ff; color: #000; }
+        /* В режиме "очков" картинка отражена зеркально — под приставленное
+           под 45° стекло. Реальный видеофон с камеры прячем (не нужен,
+           когда смотришь через стекло на настоящий мир), оставляем
+           только тёмный фон и голограмму. */
+        body.ar-glasses-mode #glcanvas { transform: scaleX(-1); }
+        body.ar-glasses-mode video { visibility: hidden; }
+        body.ar-glasses-mode { background: #000; }
+    </style>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
@@ -152,7 +160,7 @@
         const fingerDot = document.getElementById('fingerDot');
         const voiceBtn = document.getElementById('voiceBtn');
         const voiceStatus = document.getElementById('voiceStatus');
-        const scanBtn = document.getElementById('scanBtn');
+        const arGlassesBtn = document.getElementById('arGlassesBtn');
 
         let mode = 1;
 
@@ -224,70 +232,6 @@
             holoGroup.add(core);
         }
 
-        // ---------- Голограмма из скана камеры (рельеф по яркости пикселей) ----------
-        function buildScan(captureCanvas, imgData, grid) {
-            clearHolo();
-
-            const size = 2.2;
-            const geometry = new THREE.PlaneGeometry(size, size, grid - 1, grid - 1);
-            const posAttr = geometry.attributes.position;
-            const DEPTH = 0.55; // насколько ярче/темнее точки выступают вперёд/назад
-
-            for (let iy = 0; iy < grid; iy++) {
-                for (let ix = 0; ix < grid; ix++) {
-                    const i = (iy * grid + ix) * 4;
-                    const brightness = (imgData[i] + imgData[i + 1] + imgData[i + 2]) / (3 * 255);
-                    posAttr.setZ(iy * grid + ix, (brightness - 0.5) * DEPTH);
-                }
-            }
-            posAttr.needsUpdate = true;
-            geometry.computeVertexNormals();
-
-            const texture = new THREE.CanvasTexture(captureCanvas);
-
-            const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
-                map: texture, transparent: true, opacity: 0.55, side: THREE.DoubleSide
-            }));
-            holoGroup.add(mesh);
-
-            const wire = new THREE.LineSegments(new THREE.WireframeGeometry(geometry), glowLineMaterial(0.3));
-            holoGroup.add(wire);
-
-            const frame = new THREE.LineSegments(
-                new THREE.EdgesGeometry(new THREE.PlaneGeometry(size, size)),
-                glowLineMaterial(0.9)
-            );
-            holoGroup.add(frame);
-        }
-
-        function performScan() {
-            if (!video || video.readyState < 2) {
-                voiceStatus.textContent = 'Скан: камера ещё не готова';
-                return;
-            }
-            voiceStatus.textContent = '🔍 сканирую...';
-            hint.textContent = 'Сканирование объекта...';
-
-            const vw = video.videoWidth, vh = video.videoHeight;
-            const side = Math.min(vw, vh);
-            const sx = (vw - side) / 2, sy = (vh - side) / 2;
-
-            const captureCanvas = document.createElement('canvas');
-            captureCanvas.width = 512; captureCanvas.height = 512;
-            captureCanvas.getContext('2d').drawImage(video, sx, sy, side, side, 0, 0, 512, 512);
-
-            const GRID = 48; // разрешение сетки рельефа
-            const heightCanvas = document.createElement('canvas');
-            heightCanvas.width = GRID; heightCanvas.height = GRID;
-            const hctx = heightCanvas.getContext('2d');
-            hctx.drawImage(captureCanvas, 0, 0, GRID, GRID);
-            const imgData = hctx.getImageData(0, 0, GRID, GRID).data;
-
-            mode = 'scan';
-            document.querySelectorAll('.sbtn').forEach(b => b.classList.remove('active'));
-            buildScan(captureCanvas, imgData, GRID);
-            hint.textContent = 'Скан завершён ✅';
-        }
         function setMode(m) {
             mode = m;
             if (m === 1) buildCube();
@@ -675,8 +619,8 @@
                 selectMode(3);
             } else if (/(кольц|кольцо)/.test(cmd)) {
                 selectMode(5);
-            } else if (/(скан|отсканир|просканир)/.test(cmd)) {
-                performScan();
+            } else if (/(очки|стекло|режим очков)/.test(cmd)) {
+                setArGlassesMode(!arGlassesOn);
             }
         }
 
@@ -708,6 +652,21 @@
             };
         }
 
+        // ---------- Режим "AR-очки" (для beam-splitter конструкции) ----------
+        // Зеркалит картинку по горизонтали (компенсирует отражение от стекла
+        // под 45°) и прячет фон камеры — под самодельными очками смотришь
+        // сквозь настоящее стекло на реальный мир, а не на видео с камеры.
+        let arGlassesOn = false;
+        function setArGlassesMode(on) {
+            arGlassesOn = on;
+            document.body.classList.toggle('ar-glasses-mode', on);
+            arGlassesBtn.classList.toggle('active', on);
+        }
+        arGlassesBtn.addEventListener('click', () => {
+            setArGlassesMode(!arGlassesOn);
+            setMenu(false);
+        });
+
         voiceBtn.addEventListener('click', () => {
             if (!recognition) initVoiceControl();
             if (!recognition) return;
@@ -723,12 +682,6 @@
             }
         });
 
-        scanBtn.addEventListener('click', () => {
-            scanBtn.classList.add('scanning');
-            performScan();
-            setMenu(false);
-            setTimeout(() => scanBtn.classList.remove('scanning'), 600);
-        });
     </script>
 </body>
 </html>
