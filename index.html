@@ -59,6 +59,32 @@
         }
         .sbtn.active { background: #0ff; color: #000; }
 
+        #scanBtn {
+            width: 64px; height: 64px; font-size: 26px;
+            background: #002233; color: #0ff; border: 2px solid #0ff; border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            margin-top: 10px;
+        }
+        #scanBtn.scanning { background: #0ff; color: #000; animation: pulseMic 0.5s infinite; }
+
+        #voiceBtn {
+            width: 64px; height: 64px; font-size: 26px;
+            background: #002233; color: #0ff; border: 2px solid #0ff; border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            margin-top: 10px;
+        }
+        #voiceBtn.listening { background: #ff2244; color: #fff; border-color: #ff2244; animation: pulseMic 1s infinite; }
+        @keyframes pulseMic {
+            0%, 100% { box-shadow: 0 0 6px #ff2244; }
+            50% { box-shadow: 0 0 20px #ff2244; }
+        }
+
+        #voiceStatus {
+            position: absolute; top: 56px; left: 50%; transform: translateX(-50%);
+            font-size: 11px; background: rgba(0,0,0,0.5); padding: 3px 10px; border-radius: 6px;
+            z-index: 5; opacity: 0.85; white-space: nowrap; min-height: 14px;
+        }
+
         #hint {
             position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
             font-size: 11px; background: rgba(0,0,0,0.5); padding: 4px 10px; border-radius: 6px;
@@ -106,7 +132,10 @@
             <button class="sbtn" data-mode="2">🔵</button>
             <button class="sbtn" data-mode="3">⭐</button>
             <button class="sbtn" data-mode="5">🎯</button>
+            <button id="scanBtn">📷</button>
+            <button id="voiceBtn">🎤</button>
         </div>
+        <div id="voiceStatus"></div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -121,6 +150,9 @@
         const glcanvas = document.getElementById('glcanvas');
         const hint = document.getElementById('hint');
         const fingerDot = document.getElementById('fingerDot');
+        const voiceBtn = document.getElementById('voiceBtn');
+        const voiceStatus = document.getElementById('voiceStatus');
+        const scanBtn = document.getElementById('scanBtn');
 
         let mode = 1;
 
@@ -190,6 +222,71 @@
             }
             const core = new THREE.Mesh(new THREE.SphereGeometry(0.15, 12, 12), new THREE.MeshBasicMaterial({ color: CYAN }));
             holoGroup.add(core);
+        }
+
+        // ---------- Голограмма из скана камеры (рельеф по яркости пикселей) ----------
+        function buildScan(captureCanvas, imgData, grid) {
+            clearHolo();
+
+            const size = 2.2;
+            const geometry = new THREE.PlaneGeometry(size, size, grid - 1, grid - 1);
+            const posAttr = geometry.attributes.position;
+            const DEPTH = 0.55; // насколько ярче/темнее точки выступают вперёд/назад
+
+            for (let iy = 0; iy < grid; iy++) {
+                for (let ix = 0; ix < grid; ix++) {
+                    const i = (iy * grid + ix) * 4;
+                    const brightness = (imgData[i] + imgData[i + 1] + imgData[i + 2]) / (3 * 255);
+                    posAttr.setZ(iy * grid + ix, (brightness - 0.5) * DEPTH);
+                }
+            }
+            posAttr.needsUpdate = true;
+            geometry.computeVertexNormals();
+
+            const texture = new THREE.CanvasTexture(captureCanvas);
+
+            const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+                map: texture, transparent: true, opacity: 0.55, side: THREE.DoubleSide
+            }));
+            holoGroup.add(mesh);
+
+            const wire = new THREE.LineSegments(new THREE.WireframeGeometry(geometry), glowLineMaterial(0.3));
+            holoGroup.add(wire);
+
+            const frame = new THREE.LineSegments(
+                new THREE.EdgesGeometry(new THREE.PlaneGeometry(size, size)),
+                glowLineMaterial(0.9)
+            );
+            holoGroup.add(frame);
+        }
+
+        function performScan() {
+            if (!video || video.readyState < 2) {
+                voiceStatus.textContent = 'Скан: камера ещё не готова';
+                return;
+            }
+            voiceStatus.textContent = '🔍 сканирую...';
+            hint.textContent = 'Сканирование объекта...';
+
+            const vw = video.videoWidth, vh = video.videoHeight;
+            const side = Math.min(vw, vh);
+            const sx = (vw - side) / 2, sy = (vh - side) / 2;
+
+            const captureCanvas = document.createElement('canvas');
+            captureCanvas.width = 512; captureCanvas.height = 512;
+            captureCanvas.getContext('2d').drawImage(video, sx, sy, side, side, 0, 0, 512, 512);
+
+            const GRID = 48; // разрешение сетки рельефа
+            const heightCanvas = document.createElement('canvas');
+            heightCanvas.width = GRID; heightCanvas.height = GRID;
+            const hctx = heightCanvas.getContext('2d');
+            hctx.drawImage(captureCanvas, 0, 0, GRID, GRID);
+            const imgData = hctx.getImageData(0, 0, GRID, GRID).data;
+
+            mode = 'scan';
+            document.querySelectorAll('.sbtn').forEach(b => b.classList.remove('active'));
+            buildScan(captureCanvas, imgData, GRID);
+            hint.textContent = 'Скан завершён ✅';
         }
         function setMode(m) {
             mode = m;
@@ -283,6 +380,7 @@
                 startAngle = snap.angle;
                 startScale = currentScale;
                 startRotY = holoGroup.rotation.y;
+                stopSpin(); // ручной поворот пальцами останавливает автовращение
             } else if (activePointers.size === 1) {
                 dragging = true;
                 lastX = e.clientX; lastY = e.clientY; lastTime = performance.now();
@@ -304,6 +402,7 @@
                 // вращение — по изменению угла между пальцами
                 const angleDelta = snap.angle - startAngle;
                 holoGroup.rotation.y = startRotY + angleDelta;
+                targetRotY = holoGroup.rotation.y; // держим цель в синхроне, чтобы не было рывка
                 return;
             }
 
@@ -442,12 +541,46 @@
 
         // ---------- Анимация ----------
         let t = 0;
+        let autoSpin = true;
+        let targetRotX = 0, targetRotY = 0; // цель для плавного поворота (голосом)
+
+        function stopSpin() {
+            // замираем ровно в том положении, где объект находится сейчас
+            targetRotX = holoGroup.rotation.x;
+            targetRotY = holoGroup.rotation.y;
+            autoSpin = false;
+        }
+        function resumeSpin() {
+            autoSpin = true;
+        }
+        // Находит ближайший эквивалентный угол к "current", чтобы довернуть
+        // кратчайшим путём, а не крутиться через несколько полных оборотов
+        // (rotation.x/y у объекта копится без ограничений при автовращении).
+        function shortestTarget(current, desiredAbsolute) {
+            const twoPi = Math.PI * 2;
+            let diff = (desiredAbsolute - current) % twoPi;
+            if (diff > Math.PI) diff -= twoPi;
+            if (diff < -Math.PI) diff += twoPi;
+            return current + diff;
+        }
+        function lookTo(rx, ry) {
+            targetRotX = shortestTarget(holoGroup.rotation.x, rx);
+            targetRotY = shortestTarget(holoGroup.rotation.y, ry);
+            autoSpin = false;
+        }
+
         function animate() {
             requestAnimationFrame(animate);
             t += 0.016;
 
-            holoGroup.rotation.y += 0.012;
-            holoGroup.rotation.x = Math.sin(t * 0.5) * 0.15;
+            if (autoSpin) {
+                holoGroup.rotation.y += 0.012;
+                holoGroup.rotation.x = Math.sin(t * 0.5) * 0.15;
+            } else {
+                // плавно доворачиваем к заданному голосом положению и там держим
+                holoGroup.rotation.x += (targetRotX - holoGroup.rotation.x) * 0.08;
+                holoGroup.rotation.y += (targetRotY - holoGroup.rotation.y) * 0.08;
+            }
 
             if (handActive && handTargetWorld) {
                 // плавно тянемся к позиции пальца, только пока щипок ("захват")
@@ -472,16 +605,130 @@
             renderer.render(scene, camera);
         }
 
+        function selectMode(m) {
+            document.querySelectorAll('.sbtn').forEach(b => {
+                b.classList.toggle('active', parseInt(b.dataset.mode) === m);
+            });
+            setMode(m);
+        }
+
         document.querySelectorAll('.sbtn').forEach(btn => {
             btn.addEventListener('click', () => {
-                document.querySelectorAll('.sbtn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                setMode(parseInt(btn.dataset.mode));
+                selectMode(parseInt(btn.dataset.mode));
                 setMenu(false);
             });
         });
 
         startBtn.addEventListener('click', startCamera);
+
+        // ---------- Голосовое управление ----------
+        // Команды: "больше"/"увеличь" — увеличить, "меньше"/"уменьши" — уменьшить,
+        // "куб", "сфера"/"шар", "звезда", "кольца" — переключение режима,
+        // "стоп"/"замри" — остановить вращение, "крутись"/"вращайся" — вернуть,
+        // "покажи верх/низ/перед/зад/бок/лево" — повернуть нужной гранью к камере.
+        const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition = null;
+        let voiceOn = false;
+        const SCALE_STEP = 1.2; // множитель на одну команду
+
+        function applyScaleStep(factor) {
+            currentScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, currentScale * factor));
+            holoGroup.scale.set(currentScale, currentScale, currentScale);
+        }
+
+        function handleVoiceCommand(text) {
+            const cmd = text.toLowerCase();
+            voiceStatus.textContent = '🎤 «' + text + '»';
+
+            // размер
+            if (/(больш|увелич|крупн|подним)/.test(cmd)) {
+                applyScaleStep(SCALE_STEP);
+            } else if (/(меньш|уменьш|мельч|убав)/.test(cmd)) {
+                applyScaleStep(1 / SCALE_STEP);
+
+            // вращение — стоп/пуск
+            } else if (/(стоп|останов|замри|стой|заморозь)/.test(cmd)) {
+                stopSpin();
+            } else if (/(крутись|вращайся|верти|поехали|кружись|запусти)/.test(cmd)) {
+                resumeSpin();
+
+            // повороты к конкретной грани
+            } else if (/верх/.test(cmd)) {
+                lookTo(-Math.PI / 2, 0);
+            } else if (/низ/.test(cmd)) {
+                lookTo(Math.PI / 2, 0);
+            } else if (/(перед|спереди|фронт)/.test(cmd)) {
+                lookTo(0, 0);
+            } else if (/(зад|сзади|обратн)/.test(cmd)) {
+                lookTo(0, Math.PI);
+            } else if (/(слева|лево)/.test(cmd)) {
+                lookTo(0, -Math.PI / 2);
+            } else if (/(справа|прав|бок)/.test(cmd)) {
+                lookTo(0, Math.PI / 2);
+
+            // переключение объектов
+            } else if (/куб/.test(cmd)) {
+                selectMode(1);
+            } else if (/(сфер|шар)/.test(cmd)) {
+                selectMode(2);
+            } else if (/звезд/.test(cmd)) {
+                selectMode(3);
+            } else if (/(кольц|кольцо)/.test(cmd)) {
+                selectMode(5);
+            } else if (/(скан|отсканир|просканир)/.test(cmd)) {
+                performScan();
+            }
+        }
+
+        function initVoiceControl() {
+            if (!SpeechRec) {
+                voiceStatus.textContent = 'Голос: браузер не поддерживает';
+                return;
+            }
+            recognition = new SpeechRec();
+            recognition.lang = 'ru-RU';
+            recognition.continuous = true;
+            recognition.interimResults = false;
+
+            recognition.onresult = (e) => {
+                const last = e.results[e.results.length - 1];
+                if (last.isFinal) {
+                    handleVoiceCommand(last[0].transcript.trim());
+                }
+            };
+            recognition.onerror = () => {
+                // мобильные браузеры иногда шлют ошибку при тишине — не считаем это критичным
+            };
+            recognition.onend = () => {
+                // распознавание на телефонах само останавливается после паузы —
+                // перезапускаем, пока голосовое управление включено
+                if (voiceOn) {
+                    try { recognition.start(); } catch (e) { /* уже запущено */ }
+                }
+            };
+        }
+
+        voiceBtn.addEventListener('click', () => {
+            if (!recognition) initVoiceControl();
+            if (!recognition) return;
+
+            voiceOn = !voiceOn;
+            voiceBtn.classList.toggle('listening', voiceOn);
+            if (voiceOn) {
+                voiceStatus.textContent = '🎤 слушаю...';
+                try { recognition.start(); } catch (e) { /* уже запущено */ }
+            } else {
+                voiceStatus.textContent = '';
+                recognition.stop();
+            }
+        });
+
+        scanBtn.addEventListener('click', () => {
+            scanBtn.classList.add('scanning');
+            performScan();
+            setMenu(false);
+            setTimeout(() => scanBtn.classList.remove('scanning'), 600);
+        });
     </script>
 </body>
 </html>
